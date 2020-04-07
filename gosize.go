@@ -130,7 +130,16 @@ func goPackageOfName(name string) string {
 		}
 	}
 	if dot != -1 {
-		return name[:dot]
+		name = name[:dot]
+		if strings.HasPrefix(name, "struct {") ||
+			strings.HasPrefix(name, "$") {
+			return ""
+		}
+		name = strings.TrimPrefix(name, "type..hash.")
+		if strings.HasPrefix(name, "_cgoexp_") {
+			return "cgo-export"
+		}
+		return name
 	}
 	return ""
 }
