@@ -20,7 +20,9 @@ import (
 
 // objdump -D ./ipn-go-bridge/tmp/libipn-go.ios:arm64.a > objdump
 
-var ()
+var (
+	printPkg = flag.String("print-pkg", "", "package to print detailed stats for")
+)
 
 func main() {
 	flag.Parse()
@@ -49,14 +51,21 @@ func main() {
 	}
 	bs := bufio.NewScanner(objText)
 
+	var curName string
 	var inPkg string
 	var size int64
 	var pkgSize = map[string]int64{}
+	var nameSize = map[string]map[string]int64{} // pkg -> name -> size
 	for bs.Scan() {
 		line := bs.Bytes()
 		if isUnitHeader(line) {
-			name := strings.TrimRight(bs.Text()[len("0000000000000000 "):], ":\n")
-			inPkg = goPackageOfName(name)
+			curName = strings.TrimRight(bs.Text()[len("0000000000000000 "):], ":\n")
+			inPkg = goPackageOfName(curName)
+			if inPkg != "" {
+				if nameSize[inPkg] == nil {
+					nameSize[inPkg] = map[string]int64{}
+				}
+			}
 			size = 0
 			continue
 		}
@@ -65,6 +74,7 @@ func main() {
 		}
 		if len(bytes.TrimSpace(line)) == 0 {
 			pkgSize[inPkg] += int64(size)
+			nameSize[inPkg][curName] = int64(size)
 			continue
 		}
 		if len(line) >= len("       0: ff 20 47 6f                   u") &&
@@ -83,6 +93,11 @@ func main() {
 		log.Fatal(err)
 	}
 	printSortedMap(pkgSize)
+
+	if *printPkg != "" {
+		fmt.Printf("\nPackage %s:\n", *printPkg)
+		printSortedMap(nameSize[*printPkg])
+	}
 }
 
 // _type..eq.crypto/elliptic.CurveParams
