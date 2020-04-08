@@ -120,7 +120,7 @@ func goPackageOfName(name string) string {
 	if name == "" {
 		return ""
 	}
-	if name[0] != '_' {
+	if name[0] != '_' && name[0] != '<' {
 		return ""
 	}
 	name = name[1:]
