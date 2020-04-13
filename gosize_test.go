@@ -18,6 +18,7 @@ func TestGoPackageOfName(t *testing.T) {
 		{"_tailscale.com/logtail/backoff..stmp_0", "tailscale.com/logtail/backoff"},
 		{"_type..eq.[24]internal/cpu.option", "internal/cpu"},
 		{"_type..hash.github.com/tailscale/wireguard-go/wgcfg.Endpoint", "github.com/tailscale/wireguard-go/wgcfg"},
+		{"<gopkg.in/yaml%2ev2.put>", "gopkg.in/yaml.v2"},
 	}
 	for _, tt := range tests {
 		got := goPackageOfName(tt.in)

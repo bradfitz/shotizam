@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/url"
 	"os"
 	"os/exec"
 	"sort"
@@ -154,7 +155,11 @@ func goPackageOfName(name string) string {
 		if strings.HasPrefix(name, "_cgoexp_") {
 			return "cgo-export"
 		}
-		return name
+		path, err := url.PathUnescape(name)
+		if err != nil {
+			return name
+		}
+		return path
 	}
 	return ""
 }
