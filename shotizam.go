@@ -7,6 +7,7 @@
 package main
 
 import (
+	"debug/elf"
 	"debug/macho"
 	"errors"
 	"flag"
@@ -37,7 +38,30 @@ func Open(ra io.ReaderAt, size int64) (*File, error) {
 	if err == nil {
 		return machoFile(mo, ra, size)
 	}
+	elf, err := elf.NewFile(ra)
+	if err == nil {
+		return elfFile(elf, ra, size)
+	}
 	return nil, fmt.Errorf("unsupported binary format")
+}
+
+func elfFile(elf *elf.File, ra io.ReaderAt, size int64) (*File, error) {
+	f := &File{Size: size}
+
+	text := elf.Section(".text")
+	if text != nil {
+		f.TextOffset = text.Offset
+	}
+	pclntab := elf.Section(".gopclntab")
+	if pclntab == nil {
+		return nil, errors.New("no __gopclntab section found in ELF file")
+	}
+	b, err := pclntab.Data()
+	if err != nil {
+		return nil, err
+	}
+	f.Gopclntab = b
+	return f, nil
 }
 
 func machoFile(mo *macho.File, ra io.ReaderAt, size int64) (*File, error) {
