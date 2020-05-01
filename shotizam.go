@@ -27,6 +27,7 @@ import (
 )
 
 var (
+	base   = flag.String("base", "", "base file to diff from; must be in json format")
 	mode   = flag.String("mode", "sql", "output mode; tsv, json, sql, nameinfo")
 	sqlite = flag.Bool("sqlite", false, "launch SQLite on data (when true, mode flag is ignored)")
 )
@@ -136,6 +137,10 @@ func main() {
 		*mode = "sql"
 	}
 
+	if *base != "" && *mode != "json" {
+		log.Fatalf("--base only works with json mode")
+	}
+
 	var w io.WriteCloser = os.Stdout
 	switch *mode {
 	case "sql":
@@ -178,12 +183,6 @@ func main() {
 	unaccountedSize := binSize
 
 	var names []string
-	type Rec struct {
-		Name    string `json:"name,omitempty"`
-		Package string `json:"package,omitempty"`
-		What    string `json:"what"`
-		Size    int64  `json:"size"`
-	}
 	var recs []Rec
 
 	for i := range t.Funcs {
@@ -206,7 +205,7 @@ func main() {
 			case "tsv":
 				fmt.Fprintf(w, "%s\t%s\t%s\t%v\n", f.Name, f.PackageName(), what, size)
 			case "json":
-				recs = append(recs, Rec{f.Name, f.PackageName(), what, size})
+				recs = append(recs, Rec{RecKey{f.Name, f.PackageName(), what}, size})
 			}
 		}
 		emit("fixedheader", int64(t.PtrSize()+8*4))        // uintptr + 8 x int32s in _func
@@ -227,6 +226,12 @@ func main() {
 		fmt.Fprintf(w, "INSERT INTO Bin (What, Size) VALUES ('TODO', %v);\n", unaccountedSize)
 		fmt.Fprintln(w, "END TRANSACTION;")
 	case "json":
+		if *base != "" {
+			old := readBaseRecs()
+			oldm := recMap(old)
+			newm := recMap(recs)
+			recs = diffMap(oldm, newm)
+		}
 		je := json.NewEncoder(w)
 		je.SetIndent("", "\t")
 		if err := je.Encode(recs); err != nil {
@@ -295,4 +300,63 @@ func nopWriteCloser() io.WriteCloser {
 		ioutil.Discard,
 		ioutil.NopCloser(nil),
 	}
+}
+
+func readBaseRecs() []Rec {
+	f, err := os.Open(*base)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer f.Close()
+	var recs []Rec
+	if err := json.NewDecoder(f).Decode(&recs); err != nil {
+		log.Fatal(err)
+	}
+	return recs
+}
+
+type RecKey struct {
+	Name    string `json:"name,omitempty"`
+	Package string `json:"package,omitempty"`
+	What    string `json:"what"`
+}
+
+type Rec struct {
+	RecKey
+	Size int64 `json:"size"`
+}
+
+func recMap(recs []Rec) map[RecKey]int64 {
+	m := make(map[RecKey]int64)
+	for _, r := range recs {
+		m[r.RecKey] = r.Size
+	}
+	return m
+}
+
+func diffMap(a, b map[RecKey]int64) []Rec {
+	diff := make(map[RecKey]int64)
+	for k, size := range b {
+		oldSize, ok := a[k]
+		change := size - oldSize
+		if change != 0 {
+			diff[k] = change
+		}
+		if ok {
+			delete(a, k)
+		}
+	}
+	// Anything not deleted in a is stuff we dropped. Count it as
+	// negative size.
+	for k, size := range a {
+		diff[k] = -size
+	}
+
+	recs := make([]Rec, 0, len(diff))
+	for k, size := range diff {
+		recs = append(recs, Rec{k, size})
+	}
+	sort.Slice(recs, func(i, j int) bool { return recs[i].Size < recs[j].Size })
+
+	return recs
 }
