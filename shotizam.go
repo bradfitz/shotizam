@@ -9,6 +9,7 @@ package main
 import (
 	"debug/elf"
 	"debug/macho"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -26,8 +27,8 @@ import (
 )
 
 var (
-	sqlite   = flag.Bool("sqlite", false, "launch SQLite on data")
-	nameInfo = flag.Bool("nameinfo", false, "show analysis of func names")
+	mode   = flag.String("mode", "sql", "output mode; tsv, json, sql, nameinfo")
+	sqlite = flag.Bool("sqlite", false, "launch SQLite on data (when true, mode flag is ignored)")
 )
 
 type File struct {
@@ -108,7 +109,6 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		log.Printf("Using binary %v", bin)
 	}
 
 	of, err := os.Open(bin)
@@ -132,19 +132,23 @@ func main() {
 	}
 	// TODO: data
 
-	var w io.WriteCloser = os.Stdout
-	if *nameInfo {
-		w = struct {
-			io.Writer
-			io.Closer
-		}{
-			ioutil.Discard,
-			ioutil.NopCloser(nil),
-		}
+	if *sqlite {
+		*mode = "sql"
 	}
+
+	var w io.WriteCloser = os.Stdout
+	switch *mode {
+	case "sql":
+	case "json":
+	case "tsv":
+	case "nameinfo":
+		w = nopWriteCloser()
+	default:
+		log.Fatalf("unknown mode %q", *mode)
+	}
+
 	var cmd *exec.Cmd
 	var dbPath string
-
 	if *sqlite {
 		sqlBin, err := exec.LookPath("sqlite3")
 		if err != nil {
@@ -165,47 +169,70 @@ func main() {
 		}
 	}
 
-	fmt.Fprintln(w, "DROP TABLE IF EXISTS Bin;")
-	fmt.Fprintln(w, "CREATE TABLE Bin (Func varchar, Pkg varchar, What varchar, Size int64);")
-	fmt.Fprintln(w, "BEGIN TRANSACTION;")
-
+	switch *mode {
+	case "sql":
+		fmt.Fprintln(w, "DROP TABLE IF EXISTS Bin;")
+		fmt.Fprintln(w, "CREATE TABLE Bin (Func varchar, Pkg varchar, What varchar, Size int64);")
+		fmt.Fprintln(w, "BEGIN TRANSACTION;")
+	}
 	unaccountedSize := binSize
 
 	var names []string
+	type Rec struct {
+		Name    string `json:"name,omitempty"`
+		Package string `json:"package,omitempty"`
+		What    string `json:"what"`
+		Size    int64  `json:"size"`
+	}
+	var recs []Rec
+
 	for i := range t.Funcs {
 		f := &t.Funcs[i]
 		names = append(names, f.Name)
-		emit := func(what string, size int) {
+		emit := func(what string, size int64) {
 			unaccountedSize -= int64(size)
 			if size == 0 {
 				return
 			}
-			// TODO: include truncated name, stopping at first ".func" closure.
-			// Likewise, add field for func truncated just past type too. ("Type"?)
-			fmt.Fprintf(w, "INSERT INTO Bin VALUES (%s, %s, %q, %v);\n",
-				sqlString(f.Name),
-				sqlString(f.PackageName()),
-				what,
-				size)
+			switch *mode {
+			case "sql":
+				// TODO: include truncated name, stopping at first ".func" closure.
+				// Likewise, add field for func truncated just past type too. ("Type"?)
+				fmt.Fprintf(w, "INSERT INTO Bin VALUES (%s, %s, %q, %v);\n",
+					sqlString(f.Name),
+					sqlString(f.PackageName()),
+					what,
+					size)
+			case "tsv":
+				fmt.Fprintf(w, "%s\t%s\t%s\t%v\n", f.Name, f.PackageName(), what, size)
+			case "json":
+				recs = append(recs, Rec{f.Name, f.PackageName(), what, size})
+			}
 		}
-		emit("fixedheader", t.PtrSize()+8*4)        // uintptr + 8 x int32s in _func
-		emit("funcdata", t.PtrSize()*f.NumFuncData) // TODO: add optional 4 byte alignment padding before first funcdata
-		emit("pcsp", f.TableSizePCSP())
-		emit("pcfile", f.TableSizePCFile())
-		emit("pcln", f.TableSizePCLn())
+		emit("fixedheader", int64(t.PtrSize()+8*4))        // uintptr + 8 x int32s in _func
+		emit("funcdata", int64(t.PtrSize()*f.NumFuncData)) // TODO: add optional 4 byte alignment padding before first funcdata
+		emit("pcsp", int64(f.TableSizePCSP()))
+		emit("pcfile", int64(f.TableSizePCFile()))
+		emit("pcln", int64(f.TableSizePCLn()))
 		for tab := 0; tab < f.NumPCData; tab++ {
-			emit(fmt.Sprintf("pcdata%d%s", tab, pcdataSuffix(tab)), 4 /* offset pointer */ +f.TableSizePCData(tab))
+			emit(fmt.Sprintf("pcdata%d%s", tab, pcdataSuffix(tab)), int64(4 /* offset pointer */ +f.TableSizePCData(tab)))
 		}
 		// TODO: the other funcdata and pcdata tables
-		emit("text", int(f.End-f.Entry))
-		emit("funcname", len(f.Name)+len("\x00"))
+		emit("text", int64(f.End-f.Entry))
+		emit("funcname", int64(len(f.Name)+len("\x00")))
 	}
 
-	fmt.Fprintf(w, "INSERT INTO Bin (What, Size) VALUES ('TODO', %v);\n", unaccountedSize)
-
-	fmt.Fprintln(w, "END TRANSACTION;")
-
-	if *nameInfo {
+	switch *mode {
+	case "sql":
+		fmt.Fprintf(w, "INSERT INTO Bin (What, Size) VALUES ('TODO', %v);\n", unaccountedSize)
+		fmt.Fprintln(w, "END TRANSACTION;")
+	case "json":
+		je := json.NewEncoder(w)
+		je.SetIndent("", "\t")
+		if err := je.Encode(recs); err != nil {
+			log.Fatal(err)
+		}
+	case "nameinfo":
 		sort.Strings(names)
 		var totNames, skip int
 		for i, name := range names {
@@ -258,4 +285,14 @@ func sqlString(s string) string {
 	}
 	sb.WriteByte('\'')
 	return sb.String()
+}
+
+func nopWriteCloser() io.WriteCloser {
+	return struct {
+		io.Writer
+		io.Closer
+	}{
+		ioutil.Discard,
+		ioutil.NopCloser(nil),
+	}
 }
