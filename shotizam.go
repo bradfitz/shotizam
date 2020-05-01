@@ -182,8 +182,11 @@ func main() {
 			}
 			// TODO: include truncated name, stopping at first ".func" closure.
 			// Likewise, add field for func truncated just past type too. ("Type"?)
-			fmt.Fprintf(w, "INSERT INTO Bin VALUES (%q, %q, %q, %v);\n",
-				f.Name, f.PackageName(), what, size)
+			fmt.Fprintf(w, "INSERT INTO Bin VALUES (%s, %s, %q, %v);\n",
+				sqlString(f.Name),
+				sqlString(f.PackageName()),
+				what,
+				size)
 		}
 		emit("fixedheader", t.PtrSize()+8*4)        // uintptr + 8 x int32s in _func
 		emit("funcdata", t.PtrSize()*f.NumFuncData) // TODO: add optional 4 byte alignment padding before first funcdata
@@ -241,4 +244,18 @@ func pcdataSuffix(n int) string {
 		return "-inltree"
 	}
 	return ""
+}
+
+func sqlString(s string) string {
+	var sb strings.Builder
+	sb.WriteByte('\'')
+	for _, r := range s {
+		if r == '\'' {
+			sb.WriteString("''")
+		} else {
+			sb.WriteRune(r)
+		}
+	}
+	sb.WriteByte('\'')
+	return sb.String()
 }
