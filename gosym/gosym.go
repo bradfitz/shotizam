@@ -17,6 +17,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"log"
 	"strconv"
 	"strings"
 	"sync"
@@ -102,11 +103,29 @@ type Func struct {
 	NumPCData   int    // number of entries in pcdata list
 	NumFuncData int    // number of entries in funcdata list
 	FuncID      int    // special runtime func ID (for some runtime funcs)
+
+	funcStructBytes []byte
 }
 
 func (f *Func) TableSizePCFile() int { return f.tableSize(f.OffPCFile) }
 func (f *Func) TableSizePCSP() int   { return f.tableSize(f.OffPCSP) }
 func (f *Func) TableSizePCLn() int   { return f.tableSize(f.OffPCLn) }
+
+// tab is 0-based table number.
+func (f *Func) TableSizePCData(tab int) int {
+	if tab >= f.NumPCData || tab < 0 {
+		log.Fatalf("bogus tab %d; NumPCData=%v", tab, f.NumPCData)
+	}
+	fs := funcStruct{f.LineTable, f.funcStructBytes}
+	tableOff := fs.field(8 + tab)
+	if tableOff == 0 {
+		// TODO: needed?
+		log.Printf("zero table for %d", tab)
+		return 0
+	}
+	return f.tableSize(tableOff)
+}
+
 func (f *Func) tableSize(off uint32) int {
 	sumSize := 0
 	f.ForeachTableEntry(off, func(val int64, valBytes int, pc uint64, pcBytes int) {
@@ -172,27 +191,39 @@ type Table struct {
 	Files map[string]*Obj // nil for Go 1.2 and later binaries
 	Objs  []Obj           // nil for Go 1.2 and later binaries
 
-	go12line *LineTable // Go 1.2 line number table
+	lt *LineTable // Go 1.2 line number table
 }
 
-func NewTable(pcln *LineTable) (*Table, error) {
-	var t Table
-	if !pcln.isGo12() {
-		return nil, errors.New("not a go12 line table")
+// NewTable returns a new PC/line table
+// corresponding to the encoded data.
+// Text must be the start address of the
+// corresponding text segment.
+func NewTable(data []byte, text uint64) (*Table, error) {
+	lt := &LineTable{
+		Data:    data,
+		PC:      text,
+		strings: make(map[uint32]string),
 	}
-	t.go12line = pcln
+
+	var t Table
+	if !lt.isGo12() {
+		return nil, errors.New("not a go1.2+ line table")
+	}
+	t.lt = lt
 	t.Funcs = make([]Func, 0)
 	t.Files = make(map[string]*Obj)
 
 	// Put all functions into one Obj.
 	t.Objs = make([]Obj, 1)
 	obj := &t.Objs[0]
-	t.go12line.go12MapFiles(t.Files, obj)
+	t.lt.go12MapFiles(t.Files, obj)
 
-	t.Funcs = t.go12line.go12Funcs()
+	t.Funcs = t.lt.go12Funcs()
 	obj.Funcs = t.Funcs
 	return &t, nil
 }
+
+func (t *Table) PtrSize() int { return int(t.lt.ptrsize) }
 
 // PCToFunc returns the function containing the program counter pc,
 // or nil if there is no such function.
@@ -219,8 +250,8 @@ func (t *Table) PCToLine(pc uint64) (file string, line int, fn *Func) {
 	if fn = t.PCToFunc(pc); fn == nil {
 		return
 	}
-	file = t.go12line.go12PCToFile(pc)
-	line = t.go12line.go12PCToLine(pc)
+	file = t.lt.pcToFile(pc)
+	line = t.lt.go12PCToLine(pc)
 	return
 }
 
@@ -232,7 +263,7 @@ func (t *Table) LineToPC(file string, line int) (pc uint64, fn *Func, err error)
 	if !ok {
 		return 0, nil, UnknownFileError(file)
 	}
-	pc = t.go12line.go12LineToPC(file, line)
+	pc = t.lt.lineToPC(file, line)
 	if pc == 0 {
 		return 0, nil, &UnknownLineError{file, line}
 	}
@@ -308,15 +339,16 @@ type LineTable struct {
 	PC   uint64
 
 	// Go 1.2 state
+	go12     int // is this in Go 1.2 format? -1 no, 0 unknown, 1 yes
+	binary   binary.ByteOrder
+	quantum  uint32
+	ptrsize  uint32
+	functab  []byte
+	nfunctab uint32
+	filetab  []byte
+	nfiletab uint32
+
 	mu        sync.Mutex
-	go12      int // is this in Go 1.2 format? -1 no, 0 unknown, 1 yes
-	binary    binary.ByteOrder
-	quantum   uint32
-	ptrsize   uint32
-	functab   []byte
-	nfunctab  uint32
-	filetab   []byte
-	nfiletab  uint32
 	fileMap   map[string]uint32
 	strings   map[uint32]string // interned substrings of Data, keyed by offset
 	stringLen int64             // cumulate len(values(strings))
@@ -340,29 +372,6 @@ func (t *LineTable) String() string {
 func (t *LineTable) PCToLine(pc uint64) int {
 	return t.go12PCToLine(pc)
 }
-
-// NewLineTable returns a new PC/line table
-// corresponding to the encoded data.
-// Text must be the start address of the
-// corresponding text segment.
-func NewLineTable(data []byte, text uint64) *LineTable {
-	return &LineTable{
-		Data:    data,
-		PC:      text,
-		strings: make(map[uint32]string),
-	}
-}
-
-// Go 1.2 symbol table format.
-// See golang.org/s/go12symtab.
-//
-// A general note about the methods here: rather than try to avoid
-// index out of bounds errors, we trust Go to detect them, and then
-// we recover from the panics and treat them as indicative of a malformed
-// or incomplete table.
-//
-// The methods called by symtab.go, which begin with "go12" prefixes,
-// are expected to have that recovery logic.
 
 // isGo12 reports whether this is a Go 1.2 (or later) symbol table.
 func (t *LineTable) isGo12() bool {
@@ -482,8 +491,9 @@ func (t *LineTable) go12Funcs() []Func {
 
 		fsOff := t.uintptr(t.functab[(2*i+1)*int(t.ptrsize):])
 		f.OffFixedFunc = fsOff
-		info := t.Data[fsOff:]
-		fs := funcStruct{t, info}
+		f.funcStructBytes = t.Data[fsOff:]
+
+		fs := funcStruct{t, f.funcStructBytes}
 
 		f.LineTable = t
 		f.ArgSize = fs.ArgSize()
@@ -658,14 +668,8 @@ func (t *LineTable) go12PCToLine(pc uint64) (line int) {
 	return int(t.pcvalue(linetab, entry, pc))
 }
 
-// go12PCToFile maps program counter to file name for the Go 1.2 pcln table.
-func (t *LineTable) go12PCToFile(pc uint64) (file string) {
-	defer func() {
-		//if recover() != nil {
-		//file = ""
-		//}
-	}()
-
+// pcToFile maps program counter to file name.
+func (t *LineTable) pcToFile(pc uint64) (file string) {
 	f := t.findFunc(pc)
 	if f == nil {
 		return ""
@@ -684,8 +688,8 @@ func (t *LineTable) File(n int) string {
 	return t.string(t.binary.Uint32(t.filetab[4*n:]))
 }
 
-// go12LineToPC maps a (file, line) pair to a program counter for the Go 1.2 pcln table.
-func (t *LineTable) go12LineToPC(file string, line int) (pc uint64) {
+// lineToPC maps a (file, line) pair to a program counter for the Go 1.2 pcln table.
+func (t *LineTable) lineToPC(file string, line int) (pc uint64) {
 	defer func() {
 		if recover() != nil {
 			pc = 0

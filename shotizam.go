@@ -17,13 +17,16 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
+	"strings"
 	"syscall"
 
 	"github.com/bradfitz/shotizam/gosym"
 )
 
 var (
-	sqlite = flag.Bool("sqlite", false, "launch SQLite on data")
+	sqlite   = flag.Bool("sqlite", false, "launch SQLite on data")
+	nameInfo = flag.Bool("nameinfo", false, "show analysis of func names")
 )
 
 type File struct {
@@ -92,20 +95,29 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	f, err := Open(of, fi.Size())
+	binSize := fi.Size()
+	f, err := Open(of, binSize)
 	of.Close()
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	lt := gosym.NewLineTable(f.Gopclntab, f.TextOffset)
-	t, err := gosym.NewTable(lt)
+	t, err := gosym.NewTable(f.Gopclntab, f.TextOffset)
 	if err != nil {
 		log.Fatal(err)
 	}
 	// TODO: data
 
 	var w io.WriteCloser = os.Stdout
+	if *nameInfo {
+		w = struct {
+			io.Writer
+			io.Closer
+		}{
+			ioutil.Discard,
+			ioutil.NopCloser(nil),
+		}
+	}
 	var cmd *exec.Cmd
 	var dbPath string
 
@@ -133,22 +145,56 @@ func main() {
 	fmt.Fprintln(w, "CREATE TABLE Bin (Func varchar, Pkg varchar, What varchar, Size int64);")
 	fmt.Fprintln(w, "BEGIN TRANSACTION;")
 
+	unaccountedSize := binSize
+
+	var names []string
 	for i := range t.Funcs {
 		f := &t.Funcs[i]
+		names = append(names, f.Name)
 		emit := func(what string, size int) {
+			unaccountedSize -= int64(size)
+			if size == 0 {
+				return
+			}
 			// TODO: include truncated name, stopping at first ".func" closure.
 			// Likewise, add field for func truncated just past type too. ("Type"?)
 			fmt.Fprintf(w, "INSERT INTO Bin VALUES (%q, %q, %q, %v);\n",
 				f.Name, f.PackageName(), what, size)
 		}
+		emit("fixedheader", t.PtrSize()+8*4)        // uintptr + 8 x int32s in _func
+		emit("funcdata", t.PtrSize()*f.NumFuncData) // TODO: add optional 4 byte alignment padding before first funcdata
 		emit("pcsp", f.TableSizePCSP())
 		emit("pcfile", f.TableSizePCFile())
 		emit("pcln", f.TableSizePCLn())
+		for tab := 0; tab < f.NumPCData; tab++ {
+			emit(fmt.Sprintf("pcdata%d%s", tab, pcdataSuffix(tab)), 4 /* offset pointer */ +f.TableSizePCData(tab))
+		}
 		// TODO: the other funcdata and pcdata tables
-		emit("textSize", int(f.End-f.Entry))
+		emit("text", int(f.End-f.Entry))
 		emit("funcname", len(f.Name)+len("\x00"))
 	}
+
+	fmt.Fprintf(w, "INSERT INTO Bin (What, Size) VALUES ('TODO', %v);\n", unaccountedSize)
+
 	fmt.Fprintln(w, "END TRANSACTION;")
+
+	if *nameInfo {
+		sort.Strings(names)
+		var totNames, skip int
+		for i, name := range names {
+			totNames += len(name)
+			var next string
+			if i < len(names)-1 {
+				next = names[i+1]
+			}
+			if strings.HasPrefix(next, name) {
+				skip += len(name)
+			}
+		}
+		log.Printf("                          total length of func names: %d", totNames)
+		log.Printf("bytes of func names which are prefixes of other func: %d", skip)
+		return
+	}
 
 	w.Close()
 	if cmd != nil {
@@ -159,4 +205,16 @@ func main() {
 			log.Fatal(err)
 		}
 	}
+}
+
+func pcdataSuffix(n int) string {
+	switch n {
+	case 0:
+		return "-regmap"
+	case 1:
+		return "-stackmap"
+	case 2:
+		return "-inltree"
+	}
+	return ""
 }
