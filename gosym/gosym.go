@@ -119,8 +119,6 @@ func (f *Func) TableSizePCData(tab int) int {
 	fs := funcStruct{f.LineTable, f.funcStructBytes}
 	tableOff := fs.field(8 + tab)
 	if tableOff == 0 {
-		// TODO: needed?
-		log.Printf("zero table for %d", tab)
 		return 0
 	}
 	return f.tableSize(tableOff)
