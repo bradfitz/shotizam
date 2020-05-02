@@ -57,10 +57,7 @@ func Open(ra io.ReaderAt, size int64) (*File, error) {
 }
 
 func arFile(ra io.ReaderAt, size int64) (f *File, ok bool) {
-	// Start with: "!<arch>\n"
-	// Look for
-	sr := io.NewSectionReader(ra, 0, size)
-	arr, err := ar.NewReader(sr)
+	arr, err := ar.NewReader(ra)
 	if err != nil {
 		return nil, false
 	}
