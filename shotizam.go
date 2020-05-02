@@ -23,6 +23,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/bradfitz/shotizam/ar"
 	"github.com/bradfitz/shotizam/gosym"
 )
 
@@ -47,7 +48,34 @@ func Open(ra io.ReaderAt, size int64) (*File, error) {
 	if err == nil {
 		return elfFile(elf, ra, size)
 	}
+
+	if f, ok := arFile(ra, size); ok {
+		return f, nil
+	}
+
 	return nil, fmt.Errorf("unsupported binary format")
+}
+
+func arFile(ra io.ReaderAt, size int64) (f *File, ok bool) {
+	// Start with: "!<arch>\n"
+	// Look for
+	sr := io.NewSectionReader(ra, 0, size)
+	arr, err := ar.NewReader(sr)
+	if err != nil {
+		return nil, false
+	}
+	for {
+		af, err := arr.Next()
+		if err != nil {
+			return nil, false
+		}
+		if af.Name == "go.o" {
+			f, err := Open(af, af.Size)
+			if err == nil {
+				return f, true
+			}
+		}
+	}
 }
 
 func elfFile(elf *elf.File, ra io.ReaderAt, size int64) (*File, error) {
