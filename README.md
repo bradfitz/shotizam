@@ -1,7 +1,7 @@
 # Shotizam
 
 Shotizam analyzes the size of Go binaries and outputs SQL with size
-info for analyis in SQLite3.
+info for analysis in SQLite3.
 
 ```
 $ shotizam --sqlite /some/go.binary
