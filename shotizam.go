@@ -28,9 +28,10 @@ import (
 )
 
 var (
-	base   = flag.String("base", "", "base file to diff from; must be in json format")
-	mode   = flag.String("mode", "sql", "output mode; tsv, json, sql, nameinfo")
-	sqlite = flag.Bool("sqlite", false, "launch SQLite on data (when true, mode flag is ignored)")
+	base    = flag.String("base", "", "base file to diff from; must be in json format")
+	mode    = flag.String("mode", "sql", "output mode; tsv, json, sql, nameinfo")
+	sqlite  = flag.Bool("sqlite", false, "launch SQLite on data (when true, mode flag is ignored)")
+	verbose = flag.Bool("verbose", false, "verbose logging of file parsing")
 )
 
 type File struct {
@@ -97,14 +98,21 @@ func elfFile(elf *elf.File, ra io.ReaderAt, size int64) (*File, error) {
 func machoFile(mo *macho.File, ra io.ReaderAt, size int64) (*File, error) {
 	f := &File{Size: size}
 
-	/*
+	if *verbose {
 		log.Printf("Got: %+v", mo.FileHeader)
 		log.Printf("%d sections:", len(mo.Sections))
 		sort.Slice(mo.Sections, func(i, j int) bool {
 			return mo.Sections[i].Size > mo.Sections[j].Size
 		})
-	*/
-	for _, s := range mo.Sections {
+		for i, s := range mo.Symtab.Syms {
+			log.Printf("sym[%d]: %+v", i, s)
+		}
+	}
+
+	for i, s := range mo.Sections {
+		if *verbose {
+			log.Printf("sect[%d] = %+v\n", i, s.SectionHeader)
+		}
 		if s.Name == "__text" {
 			f.TextOffset = uint64(s.Offset)
 		}
