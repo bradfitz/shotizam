@@ -9,6 +9,7 @@ package main
 import (
 	"debug/elf"
 	"debug/macho"
+	"debug/pe"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -48,6 +49,10 @@ func Open(ra io.ReaderAt, size int64) (*File, error) {
 	elf, err := elf.NewFile(ra)
 	if err == nil {
 		return elfFile(elf, ra, size)
+	}
+	pf, err := pe.NewFile(ra)
+	if err == nil {
+		return peFile(pf, ra, size)
 	}
 
 	if f, ok := arFile(ra, size); ok {
@@ -127,6 +132,58 @@ func machoFile(mo *macho.File, ra io.ReaderAt, size int64) (*File, error) {
 	if f.Gopclntab == nil {
 		return nil, errors.New("no __gopclntab section found in macho file")
 	}
+	return f, nil
+}
+
+func peFile(pf *pe.File, ra io.ReaderAt, size int64) (*File, error) {
+	f := &File{Size: size}
+	for i, s := range pf.Sections {
+		if s.Name == ".text" {
+			f.TextOffset = uint64(s.Offset)
+		}
+		if *verbose {
+			log.Printf("sect[%d] = %+v", i, s.SectionHeader)
+		}
+	}
+
+	var start, end int64
+	var pclnSect int // 0-based
+	for i, s := range pf.Symbols {
+		if *verbose {
+			log.Printf("sym[%d] = %+v", i, s)
+		}
+		switch s.Name {
+		case "runtime.pclntab":
+			start = int64(s.Value)
+			if s.SectionNumber == 0 {
+				return nil, errors.New("bogus section number 0 for runtime.pclntab")
+			}
+			// It's 1-based on the file.
+			pclnSect = int(s.SectionNumber - 1)
+		case "runtime.epclntab":
+			end = int64(s.Value)
+		}
+	}
+	if start == 0 {
+		return nil, errors.New("didn't find runtime.pclntab symbol")
+	}
+	if end == 0 {
+		return nil, errors.New("didn't find runtime.epclntab symbol")
+	}
+	pcLnOff := int64(pf.Sections[pclnSect].Offset) + start
+	pcLnSize := end - start
+
+	if *verbose {
+		log.Printf("got sect %d, start %d, end %d, size %d", pclnSect, start, end, pcLnSize)
+		log.Printf("sect off = %d, pcLnOff = %d", int64(pf.Sections[pclnSect].Offset), pcLnOff)
+	}
+
+	f.Gopclntab = make([]byte, pcLnSize)
+	_, err := ra.ReadAt(f.Gopclntab, pcLnOff)
+	if err != nil {
+		return nil, err
+	}
+
 	return f, nil
 }
 
