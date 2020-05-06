@@ -90,7 +90,10 @@ func elfFile(elf *elf.File, ra io.ReaderAt, size int64) (*File, error) {
 	}
 	pclntab := elf.Section(".gopclntab")
 	if pclntab == nil {
-		return nil, errors.New("no __gopclntab section found in ELF file")
+		pclntab = elf.Section(".data.rel.ro.gopclntab")
+		if pclntab == nil {
+			return nil, errors.New("no __gopclntab or .data.rel.ro.gopclntab section found in ELF file")
+		}
 	}
 	b, err := pclntab.Data()
 	if err != nil {
