@@ -115,7 +115,12 @@ func (f *Func) TableSizePCData(tab int) int {
 		log.Fatalf("bogus tab %d; NumPCData=%v", tab, f.NumPCData)
 	}
 	fs := funcStruct{f.LineTable, f.funcStructBytes}
-	tableOff := fs.field(8 + tab)
+	var tableOff uint32
+	if f.LineTable.version >= ver116 {
+		tableOff = fs.field(9 + tab)
+	} else {
+		tableOff = fs.field(8 + tab)
+	}
 	if tableOff == 0 {
 		return 0
 	}
@@ -134,7 +139,7 @@ func (f *Func) ForeachTableEntry(off uint32, fn func(val int64, valBytes int, pc
 	if off == 0 {
 		return
 	}
-	data := f.LineTable.Data[off:]
+	data := f.LineTable.funcdata[off:]
 	pc := f.Entry
 	val := int64(-1)
 
@@ -196,9 +201,10 @@ type Table struct {
 // corresponding text segment.
 func NewTable(data []byte, text uint64) (*Table, error) {
 	lt := &LineTable{
-		Data:    data,
-		PC:      text,
-		strings: make(map[uint32]string),
+		Data:      data,
+		PC:        text,
+		funcNames: make(map[uint32]string),
+		strings:   make(map[uint32]string),
 	}
 
 	var t Table
