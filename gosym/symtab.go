@@ -139,7 +139,7 @@ func (f *Func) ForeachTableEntry(off uint32, fn func(val int64, valBytes int, pc
 	if off == 0 {
 		return
 	}
-	data := f.LineTable.funcdata[off:]
+	data := f.LineTable.pctab[off:]
 	pc := f.Entry
 	val := int64(-1)
 
