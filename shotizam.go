@@ -220,7 +220,8 @@ func main() {
 		log.Fatal(err)
 	}
 
-	t, err := gosym.NewTable(f.Gopclntab, f.TextOffset)
+	lt := gosym.NewLineTable(f.Gopclntab, f.TextOffset)
+	t, err := gosym.NewTable(nil, lt)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -290,10 +291,10 @@ func main() {
 			case "sql":
 				// TODO: include truncated name, stopping at first ".func" closure.
 				// Likewise, add field for func truncated just past type too. ("Type"?)
-				fmt.Fprintf(w, "INSERT INTO Bin VALUES (%s, %s, %q, %v);\n",
+				fmt.Fprintf(w, "INSERT INTO Bin VALUES (%s, %s, %s, %v);\n",
 					sqlString(f.Name),
 					sqlString(f.PackageName()),
-					what,
+					sqlString(what),
 					size)
 			case "tsv":
 				fmt.Fprintf(w, "%s\t%s\t%s\t%v\n", f.Name, f.PackageName(), what, size)
@@ -301,14 +302,14 @@ func main() {
 				recs = append(recs, Rec{RecKey{f.Name, f.PackageName(), what}, size})
 			}
 		}
-		emit("fixedheader", int64(t.PtrSize()+8*4))        // uintptr + 8 x int32s in _func
-		emit("funcdata", int64(t.PtrSize()*f.NumFuncData)) // TODO: add optional 4 byte alignment padding before first funcdata
-		emit("pcsp", int64(f.TableSizePCSP()))
-		emit("pcfile", int64(f.TableSizePCFile()))
-		emit("pcln", int64(f.TableSizePCLn()))
-		for tab := 0; tab < f.NumPCData; tab++ {
-			emit(fmt.Sprintf("pcdata%d%s", tab, pcdataSuffix(tab)), int64(4 /* offset pointer */ +f.TableSizePCData(tab)))
-		}
+		//emit("fixedheader", int64(t.PtrSize()+8*4))        // uintptr + 8 x int32s in _func
+		//emit("funcdata", int64(t.PtrSize()*f.NumFuncData)) // TODO: add optional 4 byte alignment padding before first funcdata
+		//emit("pcsp", int64(f.TableSizePCSP()))
+		//emit("pcfile", int64(f.TableSizePCFile()))
+		//emit("pcln", int64(f.TableSizePCLn()))
+		//for tab := 0; tab < f.NumPCData; tab++ {
+		//	emit(fmt.Sprintf("pcdata%d%s", tab, pcdataSuffix(tab)), int64(4 /* offset pointer */ +f.TableSizePCData(tab)))
+		//}
 		// TODO: the other funcdata and pcdata tables
 		emit("text", int64(f.End-f.Entry))
 		emit("funcname", int64(len(f.Name)+len("\x00")))
@@ -452,4 +453,9 @@ func diffMap(a, b map[RecKey]int64) []Rec {
 	sort.Slice(recs, func(i, j int) bool { return recs[i].Size < recs[j].Size })
 
 	return recs
+}
+
+// singleQuote is like %q but with a single quote. sqlite has some reserve types like "text"
+func singleQuote(s string) string {
+	return "'" + s + "'"
 }
