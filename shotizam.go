@@ -302,11 +302,11 @@ func main() {
 				recs = append(recs, Rec{RecKey{f.Name, f.PackageName(), what}, size})
 			}
 		}
-		//emit("fixedheader", int64(t.PtrSize()+8*4))        // uintptr + 8 x int32s in _func
-		//emit("funcdata", int64(t.PtrSize()*f.NumFuncData)) // TODO: add optional 4 byte alignment padding before first funcdata
-		//emit("pcsp", int64(f.TableSizePCSP()))
-		//emit("pcfile", int64(f.TableSizePCFile()))
-		//emit("pcln", int64(f.TableSizePCLn()))
+		emit("fixedheader", int64(t.PtrSize()+8*4))        // uintptr + 8 x int32s in _func
+		emit("funcdata", int64(t.PtrSize()*f.NumFuncData)) // TODO: add optional 4 byte alignment padding before first funcdata
+		emit("pcsp", int64(f.TableSizePCSP()))
+		emit("pcfile", int64(f.TableSizePCFile()))
+		emit("pcln", int64(f.TableSizePCLn()))
 		//for tab := 0; tab < f.NumPCData; tab++ {
 		//	emit(fmt.Sprintf("pcdata%d%s", tab, pcdataSuffix(tab)), int64(4 /* offset pointer */ +f.TableSizePCData(tab)))
 		//}

@@ -137,6 +137,14 @@ type Func struct {
 	FrameSize int
 	LineTable *LineTable
 	Obj       *Obj
+
+	// Additions from Go internal library
+	OffPCSP     uint32 // pcsp table (offset from pcvalue table)
+	OffPCFile   uint32 // pcfile table (offset from pcvalue table)
+	OffPCLn     uint32 // pcln table (offset from pcvalue table)
+	NumPCData   int    // number of entries in pcdata list
+	NumFuncData int    // nfuncdata
+	funcData    funcData
 }
 
 // An Obj represents a collection of functions in a symbol table.
