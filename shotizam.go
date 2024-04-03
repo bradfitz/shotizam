@@ -84,10 +84,20 @@ func arFile(ra io.ReaderAt, size int64) (f *File, ok bool) {
 func elfFile(elf *elf.File, ra io.ReaderAt, size int64) (*File, error) {
 	f := &File{Size: size}
 
-	text := elf.Section(".text")
-	if text != nil {
-		f.TextOffset = text.Offset
+	syms, err := elf.Symbols()
+	if err != nil {
+		return nil, fmt.Errorf("elf symbols: %w", err)
 	}
+	for _, sym := range syms {
+		if sym.Name == "runtime.text" {
+			f.TextOffset = sym.Value
+			break
+		}
+	}
+	if f.TextOffset == 0 {
+		return nil, errors.New("no runtime.text symbol in ELF file")
+	}
+
 	pclntab := elf.Section(".gopclntab")
 	if pclntab == nil {
 		pclntab = elf.Section(".data.rel.ro.gopclntab")
@@ -220,7 +230,8 @@ func main() {
 		log.Fatal(err)
 	}
 
-	t, err := gosym.NewTable(f.Gopclntab, f.TextOffset)
+	lt := gosym.NewLineTable(f.Gopclntab, f.TextOffset)
+	t, err := gosym.NewTable(nil, lt)
 	if err != nil {
 		log.Fatal(err)
 	}
