@@ -81,11 +81,11 @@ func arFile(ra io.ReaderAt, size int64) (f *File, ok bool) {
 	}
 }
 
-func elfFile(elf *elf.File, ra io.ReaderAt, size int64) (*File, error) {
+func elfFile(ef *elf.File, size int64) (*File, error) {
 	f := &File{Size: size}
 
-	syms, err := elf.Symbols()
-	if err != nil {
+	syms, err := ef.Symbols()
+	if err != nil && !errors.Is(err, elf.ErrNoSymbols) {
 		return nil, fmt.Errorf("elf symbols: %w", err)
 	}
 	for _, sym := range syms {
@@ -95,14 +95,20 @@ func elfFile(elf *elf.File, ra io.ReaderAt, size int64) (*File, error) {
 		}
 	}
 	if f.TextOffset == 0 {
-		return nil, errors.New("no runtime.text symbol in ELF file")
+		text := ef.Section(".text")
+		if text != nil {
+			f.TextOffset = text.Offset
+		}
+	}
+	if f.TextOffset == 0 {
+		return nil, errors.New("no runtime.text symbol or .text section in ELF file")
 	}
 
-	pclntab := elf.Section(".gopclntab")
+	pclntab := ef.Section(".gopclntab")
 	if pclntab == nil {
-		pclntab = elf.Section(".data.rel.ro.gopclntab")
+		pclntab = ef.Section(".data.rel.ro.gopclntab")
 		if pclntab == nil {
-			return nil, errors.New("no __gopclntab or .data.rel.ro.gopclntab section found in ELF file")
+			return nil, errors.New("no .gopclntab or .data.rel.ro.gopclntab section found in ELF file")
 		}
 	}
 	b, err := pclntab.Data()
