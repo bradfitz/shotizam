@@ -15,7 +15,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"os"
 	"os/exec"
@@ -46,23 +45,23 @@ func Open(ra io.ReaderAt, size int64) (*File, error) {
 	if err == nil {
 		return machoFile(mo, ra, size)
 	}
-	elf, err := elf.NewFile(ra)
+	ef, err := elf.NewFile(ra)
 	if err == nil {
-		return elfFile(elf, ra, size)
+		return elfFile(ef, size)
 	}
 	pf, err := pe.NewFile(ra)
 	if err == nil {
 		return peFile(pf, ra, size)
 	}
 
-	if f, ok := arFile(ra, size); ok {
+	if f, ok := arFile(ra); ok {
 		return f, nil
 	}
 
 	return nil, fmt.Errorf("unsupported binary format")
 }
 
-func arFile(ra io.ReaderAt, size int64) (f *File, ok bool) {
+func arFile(ra io.ReaderAt) (f *File, ok bool) {
 	arr, err := ar.NewReader(ra)
 	if err != nil {
 		return nil, false
@@ -269,7 +268,7 @@ func main() {
 		if err != nil {
 			log.Fatalf("sqlite3 not found")
 		}
-		td, err := ioutil.TempDir("", "shotizam")
+		td, err := os.MkdirTemp("", "shotizam")
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -299,7 +298,7 @@ func main() {
 		f := &t.Funcs[i]
 		names = append(names, f.Name)
 		emit := func(what string, size int64) {
-			unaccountedSize -= int64(size)
+			unaccountedSize -= size
 			if size == 0 {
 				return
 			}
@@ -379,7 +378,7 @@ func main() {
 func pcdataSuffix(n int) string {
 	switch n {
 	case 0:
-		return "-regmap"
+		return "-unsafepoint"
 	case 1:
 		return "-stackmap"
 	case 2:
@@ -407,8 +406,8 @@ func nopWriteCloser() io.WriteCloser {
 		io.Writer
 		io.Closer
 	}{
-		ioutil.Discard,
-		ioutil.NopCloser(nil),
+		io.Discard,
+		io.NopCloser(nil),
 	}
 }
 
