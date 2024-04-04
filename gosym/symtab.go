@@ -5,6 +5,11 @@
 // Package gosym implements access to the Go symbol
 // and line number tables embedded in Go binaries generated
 // by the gc compilers.
+//
+// See https://golang.org/s/go12symtab
+//
+// This is a fork of the Go standard library's debug/gosym package,
+// with some stuff added for use by Shotizam.
 package gosym
 
 import (
@@ -137,6 +142,14 @@ type Func struct {
 	FrameSize int
 	LineTable *LineTable
 	Obj       *Obj
+
+	OffPCSP     uint32 // pcsp table (offset from pcvalue table)
+	OffPCFile   uint32 // pcfile table (offset from pcvalue table)
+	OffPCLn     uint32 // pcln table (offset from pcvalue table)
+	NumPCData   int    // number of entries in pcdata list
+	NumFuncData int    // number of entries in funcdata list
+
+	funcDataBytes []byte
 }
 
 // An Obj represents a collection of functions in a symbol table.
