@@ -311,6 +311,14 @@ func (t *LineTable) go12Funcs() []Func {
 		info := t.funcData(uint32(i))
 		f.LineTable = t
 		f.FrameSize = int(info.deferreturn())
+
+		f.funcDataBytes = t.funcdata[t.funcTab().funcOff(i):]
+		f.NumPCData = info.numPCData()
+		f.NumFuncData = info.numFuncData()
+		f.OffPCSP = info.pcsp()
+		f.OffPCFile = info.pcfile()
+		f.OffPCLn = info.pcln()
+
 		syms[i] = Sym{
 			Value:     f.Entry,
 			Type:      'T',
@@ -463,10 +471,10 @@ func (f funcData) pcln() uint32        { return f.field(6) }
 func (f funcData) cuOffset() uint32    { return f.field(8) }
 
 // field returns the nth field of the _func struct.
-// It panics if n == 0 or n > 9; for n == 0, call f.entryPC.
+// It panics if n == 0; for n == 0, call f.entryPC.
 // Most callers should use a named field accessor (just above).
 func (f funcData) field(n uint32) uint32 {
-	if n == 0 || n > 9 {
+	if n == 0 {
 		panic("bad funcdata field")
 	}
 	// In Go 1.18, the first field of _func changed
