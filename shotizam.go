@@ -31,6 +31,7 @@ var (
 	base    = flag.String("base", "", "base file to diff from; must be in json format")
 	mode    = flag.String("mode", "sql", "output mode; tsv, json, sql, nameinfo")
 	sqlite  = flag.Bool("sqlite", false, "launch SQLite on data (when true, mode flag is ignored)")
+	sqldb   = flag.String("sqldb", "", "save SQLite db (when set, mode and sqlite flag is ignored)")
 	verbose = flag.Bool("verbose", false, "verbose logging of file parsing")
 )
 
@@ -242,6 +243,11 @@ func main() {
 	}
 	// TODO: data
 
+	savedb := false
+	if *sqldb != "" {
+		*sqlite = true
+		savedb = true
+	}
 	if *sqlite {
 		*mode = "sql"
 	}
@@ -369,9 +375,17 @@ func main() {
 		if err := cmd.Wait(); err != nil {
 			log.Fatal(err)
 		}
-		if err := syscall.Exec(cmd.Path, cmd.Args, cmd.Env); err != nil {
-			log.Fatal(err)
+
+		if savedb {
+			if err := os.Rename(dbPath, *sqldb); err != nil {
+				log.Fatal(err)
+			}
+		} else {
+			if err := syscall.Exec(cmd.Path, cmd.Args, cmd.Env); err != nil {
+				log.Fatal(err)
+			}
 		}
+
 	}
 }
 
