@@ -30,8 +30,8 @@ import (
 var (
 	base    = flag.String("base", "", "base file to diff from; must be in json format")
 	mode    = flag.String("mode", "sql", "output mode; tsv, json, sql, nameinfo")
+	output  = flag.String("o", "", "output filename; default to stdout")
 	sqlite  = flag.Bool("sqlite", false, "launch SQLite on data (when true, mode flag is ignored)")
-	sqldb   = flag.String("sqldb", "", "save SQLite db (when set, mode and sqlite flag is ignored)")
 	verbose = flag.Bool("verbose", false, "verbose logging of file parsing")
 )
 
@@ -243,11 +243,6 @@ func main() {
 	}
 	// TODO: data
 
-	savedb := false
-	if *sqldb != "" {
-		*sqlite = true
-		savedb = true
-	}
 	if *sqlite {
 		*mode = "sql"
 	}
@@ -257,12 +252,19 @@ func main() {
 	}
 
 	var w io.WriteCloser = os.Stdout
+	if !*sqlite && *output != "" && *output != "-" {
+		var err error
+		w, err = os.Create(*output)
+		if err != nil {
+			log.Fatalf("output fail: %s", err)
+		}
+	}
 	switch *mode {
 	case "sql":
 	case "json":
 	case "tsv":
 	case "nameinfo":
-		w = nopWriteCloser()
+
 	default:
 		log.Fatalf("unknown mode %q", *mode)
 	}
@@ -347,6 +349,7 @@ func main() {
 			newm := recMap(recs)
 			recs = diffMap(oldm, newm)
 		}
+		// TODO: output write new or diff?
 		je := json.NewEncoder(w)
 		je.SetIndent("", "\t")
 		if err := je.Encode(recs); err != nil {
@@ -365,8 +368,8 @@ func main() {
 				skip += len(name)
 			}
 		}
-		log.Printf("                          total length of func names: %d", totNames)
-		log.Printf("bytes of func names which are prefixes of other func: %d", skip)
+		fmt.Fprintf(w, "                          total length of func names: %d\n", totNames)
+		fmt.Fprintf(w, "bytes of func names which are prefixes of other func: %d\n", skip)
 		return
 	}
 
@@ -376,16 +379,33 @@ func main() {
 			log.Fatal(err)
 		}
 
-		if savedb {
-			if err := os.Rename(dbPath, *sqldb); err != nil {
-				log.Fatal(err)
-			}
-		} else {
-			if err := syscall.Exec(cmd.Path, cmd.Args, cmd.Env); err != nil {
-				log.Fatal(err)
-			}
+		if *output != "" {
+			(func() { // use func for defer close
+				r, err := os.Open(dbPath)
+				if err != nil {
+					log.Fatalf("output fail: %s", err)
+				}
+				defer r.Close()
+
+				var w io.WriteCloser = os.Stdout
+				if *output != "-" {
+					var err error
+					w, err = os.Create(*output)
+					if err != nil {
+						log.Fatalf("output fail: %s", err)
+					}
+				}
+				defer w.Close()
+
+				if _, err := io.Copy(w, r); err != nil {
+					log.Fatalf("output fail: %s", err)
+				}
+			})()
 		}
 
+		if err := syscall.Exec(cmd.Path, cmd.Args, cmd.Env); err != nil {
+			log.Fatal(err)
+		}
 	}
 }
 
