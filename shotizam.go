@@ -306,10 +306,10 @@ func main() {
 			case "sql":
 				// TODO: include truncated name, stopping at first ".func" closure.
 				// Likewise, add field for func truncated just past type too. ("Type"?)
-				fmt.Fprintf(w, "INSERT INTO Bin VALUES (%s, %s, %q, %v);\n",
+				fmt.Fprintf(w, "INSERT INTO Bin VALUES (%s, %s, %s, %v);\n",
 					sqlString(f.Name),
 					sqlString(f.PackageName()),
-					what,
+					sqlString(what),
 					size)
 			case "tsv":
 				fmt.Fprintf(w, "%s\t%s\t%s\t%v\n", f.Name, f.PackageName(), what, size)
