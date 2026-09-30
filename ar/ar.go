@@ -76,6 +76,11 @@ func (r *Reader) Next() (*File, error) {
 	}
 	f := &File{}
 	f.Name = textproto.TrimString(string(buf[:fileLen]))
+	// GNU ar terminates names with a slash, except for the special
+	// symbol table ("/") and long name table ("//") members.
+	if strings.HasSuffix(f.Name, "/") && f.Name != "/" && f.Name != "//" {
+		f.Name = strings.TrimSuffix(f.Name, "/")
+	}
 	sizeStr := string(buf[sizeOff : sizeOff+sizeLen])
 	f.Size, err = strconv.ParseInt(textproto.TrimString(sizeStr), 10, 64)
 	if err != nil {
