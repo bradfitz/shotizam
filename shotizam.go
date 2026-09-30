@@ -37,6 +37,7 @@ import (
 var (
 	base    = flag.String("base", "", "base file to diff from; must be in json format")
 	mode    = flag.String("mode", "sql", "output mode; tsv, json, sql, summary, nameinfo")
+	output  = flag.String("o", "", "output filename (default stdout); with --sqlite, the SQLite database to create")
 	sqlite  = flag.Bool("sqlite", false, "launch SQLite on data (when true, mode flag is ignored)")
 	verbose = flag.Bool("verbose", false, "verbose logging of file parsing")
 	noDWARF = flag.Bool("nodwarf", false, "don't break down DWARF sections")
@@ -276,14 +277,18 @@ func main() {
 		log.Fatalf("--base only works with json mode")
 	}
 
-	var w io.WriteCloser = os.Stdout
 	switch *mode {
-	case "sql", "json", "tsv", "summary":
-	case "nameinfo":
-		printNameInfo(im)
-		return
+	case "sql", "json", "tsv", "summary", "nameinfo":
 	default:
 		log.Fatalf("unknown mode %q", *mode)
+	}
+
+	var w io.WriteCloser = os.Stdout
+	if !*sqlite && *output != "" && *output != "-" {
+		w, err = os.Create(*output)
+		if err != nil {
+			log.Fatal(err)
+		}
 	}
 
 	var cmd *exec.Cmd
@@ -292,11 +297,15 @@ func main() {
 		if err != nil {
 			log.Fatalf("sqlite3 not found")
 		}
-		td, err := os.MkdirTemp("", "shotizam")
-		if err != nil {
-			log.Fatal(err)
+		dbPath := *output
+		if dbPath == "" || dbPath == "-" {
+			td, err := os.MkdirTemp("", "shotizam")
+			if err != nil {
+				log.Fatal(err)
+			}
+			dbPath = filepath.Join(td, "shotizam.db")
 		}
-		cmd = exec.Command(sqlBin, filepath.Join(td, "shotizam.db"))
+		cmd = exec.Command(sqlBin, dbPath)
 		w, err = cmd.StdinPipe()
 		if err != nil {
 			log.Fatal(err)
@@ -316,6 +325,8 @@ func main() {
 		}
 	case "summary":
 		writeSummary(bw, im, segs)
+	case "nameinfo":
+		writeNameInfo(bw, im)
 	case "json":
 		recs := aggregate(im, segs)
 		if *base != "" {
@@ -330,7 +341,9 @@ func main() {
 	if err := bw.Flush(); err != nil {
 		log.Fatal(err)
 	}
-	w.Close()
+	if err := w.Close(); err != nil {
+		log.Fatal(err)
+	}
 	if cmd != nil {
 		if err := cmd.Wait(); err != nil {
 			log.Fatal(err)
@@ -467,7 +480,9 @@ func writeSummary(w io.Writer, im *image, segs []Segment) {
 	printTop("what", byWhat)
 }
 
-func printNameInfo(im *image) {
+// writeNameInfo writes statistics about how much of the func name
+// data is shared prefixes of other func names.
+func writeNameInfo(w io.Writer, im *image) {
 	if im.pcln == nil {
 		log.Fatal("no pclntab")
 	}
@@ -483,8 +498,8 @@ func printNameInfo(im *image) {
 			skip += len(name)
 		}
 	}
-	log.Printf("                          total length of func names: %d", totNames)
-	log.Printf("bytes of func names which are prefixes of other func: %d", skip)
+	fmt.Fprintf(w, "                          total length of func names: %d\n", totNames)
+	fmt.Fprintf(w, "bytes of func names which are prefixes of other func: %d\n", skip)
 }
 
 func sqlString(s string) string {
